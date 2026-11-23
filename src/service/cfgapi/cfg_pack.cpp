@@ -224,7 +224,9 @@ bool absent_optional_directory(const CfgPack::Directory& directory) {
 // actually present. Runtime behavior continues to follow the logical path and
 // payload; resource.json exists for administrators and generic archive tools.
 void add_resource_descriptions(const ArchiveSchema& schema, CfgTar& archive) {
-    for (const auto& [directory, text] : schema.directory_descriptions) {
+    for (const auto& description : schema.directory_descriptions) {
+        const auto& directory = description.first;
+        const auto& text = description.second;
         const bool present = std::any_of(archive.entries().begin(), archive.entries().end(),
             [&](const auto& item) { return item.first.rfind(directory, 0) == 0; });
         const auto path = directory + "resource.json";
