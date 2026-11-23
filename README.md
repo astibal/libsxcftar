@@ -48,18 +48,18 @@ paths are retained, but high-level calls now require the schema as first argumen
 #include <service/cfgapi/cfg_archive.hpp>
 
 sx::cfg::ArchiveSchema schema;
-schema.format = "rekochat-config";
+schema.format = "app-config";
 schema.version = 1;
-schema.required_files = {"rekochat.cfg"};
+schema.required_files = {"app.cfg"};
 schema.optional_files = {"logging.cfg"};
 schema.allowed_directories = {"certs/", "templates/"};
-schema.main_config = "rekochat.cfg"; // optional convenience role
+schema.main_config = "app.cfg"; // optional convenience role
 
 sx::cfg::CfgTar tar;
 tar.add("manifest.json", sx::cfg::CfgManifest::canonical(schema));
-tar.add("rekochat.cfg", "enabled = true;\n");
+tar.add("app.cfg", "enabled = true;\n");
 sx::cfg::CfgManifest::validate(schema, tar);
-auto source = sx::cfg::CfgArchive::read_archive(schema, "chat.cftar", tar.write());
+auto source = sx::cfg::CfgArchive::read_archive(schema, "app.cftar", tar.write());
 ```
 
 The manifest has exactly `format` and `version` fields. It identifies the

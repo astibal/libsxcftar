@@ -4,7 +4,7 @@ This is an intentional source API break from 0.1. The library provides no
 no-schema overloads and never infers application policy from an uploaded archive.
 The existing Smithproxy on-disk format remains `smithproxy-cftar`, version 1.
 
-## Smithproxy, NetworkD and smithproxy-cftar
+## Legacy Smithproxy profile
 
 1. Update/pin the `libsxcftar` dependency to the 0.2 schema API commit.
    Link `sxcftar::sxcftar`; do not compile duplicate extracted sources or define
@@ -15,7 +15,7 @@ The existing Smithproxy on-disk format remains `smithproxy-cftar`, version 1.
    const auto schema = sx::cfg::smithproxy_schema();
    ```
 
-   NetworkD reading the shared Smithproxy archive must use this same profile,
+   Consumers reading a shared Smithproxy archive must use this same profile,
    not a new format identity. Root-level application `.cfg` files remain allowed.
 3. Pass it as the **first argument** to all calls listed below. Include
    `service/cfgapi/cfg_schema.hpp` where only the schema is needed.
@@ -25,7 +25,7 @@ The existing Smithproxy on-disk format remains `smithproxy-cftar`, version 1.
    instance operations use it automatically. Their `schema()` accessor can
    supply the profile for a subsequent exposure or runtime tree.
 5. Port any unmerged changes to extracted implementations into this repository
-   deliberately. Do not discard local NetworkD fixes while removing duplicates.
+   deliberately. Preserve local fixes while removing duplicates.
 6. Update tests and fixtures: runtime trees and exposures now validate the
    manifest and schema before touching disk. Fixtures need a valid manifest
    and required files, or their own explicit test schema.
@@ -68,7 +68,7 @@ Instance methods such as `prepare_save`, `prepare_resource`, `accept_saved_main`
 lists and use the schema captured at open/read time. Failed validation leaves
 cached/working content unchanged.
 
-## RekoChat or another application
+## Custom application schema
 
 Define a schema in application code as shown in README. Choose a distinct format
 identifier, required/optional files and recursive directory prefixes. Use that
@@ -80,8 +80,8 @@ A main or startup role is optional. Without roles, pack everything through
 
 ```cpp
 sx::cfg::CfgPack::Input input;
-input.files.push_back({"rekochat.cfg", "/etc/rekochat/rekochat.cfg"});
-input.directories.push_back({"certs", "/etc/rekochat/certs"});
+input.files.push_back({"app.cfg", "/etc/app/app.cfg"});
+input.directories.push_back({"certs", "/etc/app/certs"});
 auto tar = sx::cfg::CfgPack::build(schema, input);
 ```
 
