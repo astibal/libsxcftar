@@ -6,7 +6,7 @@ packing and temporary runtime trees. No dependency on Socle or the proxy runtime
 
 **Version 0.2 requires an explicit `ArchiveSchema` for every high-level archive
 operation.** There is no implicit Smithproxy default or global schema override.
-See [MIGRATION.md](MIGRATION.md) for Smithproxy, NetworkD, CLI and other consumers.
+See [MIGRATION.md](MIGRATION.md) for consumer migration instructions.
 
 ## Build
 
