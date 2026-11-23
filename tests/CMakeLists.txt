@@ -1,5 +1,6 @@
 find_package(GTest REQUIRED)
 add_executable(sxcftar_tests
+    schema_tests.cpp
     crypto_tests.cpp
     unit/service/cfg_tar_tests.cpp
     unit/service/cfg_archive_tests.cpp

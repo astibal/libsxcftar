@@ -4,7 +4,7 @@
 #include <sys/types.h>
 
 #include "cfg_io.hpp"
-#include "cfg_tar.hpp"
+#include "cfg_schema.hpp"
 
 namespace sx::cfg {
 
@@ -14,10 +14,10 @@ namespace sx::cfg {
 class CfgRuntimeTree {
 public:
     // Materialize an archive through the production filesystem provider.
-    static CfgRuntimeTree create(const CfgTar& archive);
+    static CfgRuntimeTree create(const ArchiveSchema& schema, const CfgTar& archive);
     // Materialize through an alternate provider for deterministic failures or
     // platform-specific temporary-directory handling.
-    static CfgRuntimeTree create(const CfgTar& archive, CfgIoPtr io);
+    static CfgRuntimeTree create(const ArchiveSchema& schema, const CfgTar& archive, CfgIoPtr io);
 
     CfgRuntimeTree(const CfgRuntimeTree&) = delete;
     CfgRuntimeTree& operator=(const CfgRuntimeTree&) = delete;

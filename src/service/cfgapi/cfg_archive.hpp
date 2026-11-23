@@ -1,5 +1,5 @@
 /*
- * Selection, validation, and mutation of Smithproxy's configuration archive.
+ * Selection, validation, and mutation of application configuration archives.
  */
 
 #pragma once
@@ -10,7 +10,7 @@
 #include <string_view>
 #include <vector>
 
-#include <service/cfgapi/cfg_tar.hpp>
+#include <service/cfgapi/cfg_schema.hpp>
 
 namespace sx::cfg {
 
@@ -20,21 +20,17 @@ namespace sx::cfg {
 class CfgManifest {
 public:
     static constexpr std::string_view path = "manifest.json";
-    static constexpr std::string_view format = "smithproxy-cftar";
-    static constexpr unsigned int version = 1;
     static constexpr std::size_t max_config_size = 64ULL * 1024ULL * 1024ULL;
 
     // Return the canonical manifest stored in newly created archives.
-    static std::string canonical();
+    static std::string canonical(const ArchiveSchema& schema);
 
-    // Validate the manifest and the complete archive namespace. The main and
-    // startup configurations are mandatory. Root .cfg files must be bounded UTF-8
-    // text; other paths retain their existing namespace restrictions.
-    static void validate(const CfgTar& archive);
+    // Validate identity, required files, allowed paths and application content.
+    static void validate(const ArchiveSchema& schema, const CfgTar& archive);
 
     // Report whether a logical path belongs to a persistent resource
-    // namespace. Control files at the archive root are deliberately excluded.
-    static bool is_resource_path(std::string_view path);
+    // namespace. The manifest, configuration roles and root-extension files are excluded.
+    static bool is_resource_path(const ArchiveSchema& schema, std::string_view path);
 };
 
 // Owns the result of one resource lookup. Native content is copied out of the
@@ -91,11 +87,13 @@ struct CfgArchiveInfo {
     std::vector<Entry> entries;
 };
 
-// Owns Smithproxy's validated persistent configuration archive. During the
+// Owns an application-validated persistent configuration archive. During the
 // migration window it can also represent one explicit legacy input, but that
 // mode is an entrance ramp to CFtar rather than a parallel management model.
 class CfgArchive {
 public:
+    const ArchiveSchema& schema() const noexcept { return schema_; }
+
     // Describes whether startup selected native storage or its legacy entrance.
     enum class Kind {
         legacy,
@@ -113,7 +111,7 @@ public:
     // An explicit native archive or legacy migration input wins. Otherwise an
     // existing CfgTar is authoritative and fully validated; its absence opens
     // the one-time legacy entrance used to construct the first native archive.
-    static CfgArchive open(Paths paths);
+    static CfgArchive open(ArchiveSchema schema, Paths paths);
 
     // Derive native and optional startup siblings from an active legacy path.
     // A terminal .cfg is replaced; other names keep their complete basename.
@@ -122,11 +120,11 @@ public:
 
     // Construct a native archive from bytes supplied by a privileged reader.
     // This is the reload path after Smithproxy has dropped filesystem rights.
-    static CfgArchive read_archive(std::string path, std::string_view bytes);
+    static CfgArchive read_archive(ArchiveSchema schema, std::string path, std::string_view bytes);
 
     // Parse and fully validate an uploaded archive without selecting or
     // mutating the running configuration archive.
-    static CfgArchiveInfo inspect_archive(std::string_view bytes);
+    static CfgArchiveInfo inspect_archive(ArchiveSchema schema, std::string_view bytes);
 
     // Describe the selected format and persistent path. These accessors do not
     // perform I/O; selection and validation are complete after open().
@@ -183,9 +181,10 @@ public:
 private:
     // Construction stays private to prevent unvalidated CfgTar archives from
     // being assembled by callers.
-    CfgArchive(Kind kind, std::string path, std::optional<CfgTar> archive);
+    CfgArchive(ArchiveSchema schema, Kind kind, std::string path, std::optional<CfgTar> archive);
 
     // The optional archive is populated exactly when kind_ is cftar.
+    ArchiveSchema schema_;
     Kind kind_;
     std::string path_;
     std::optional<CfgTar> archive_;

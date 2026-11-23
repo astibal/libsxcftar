@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "cfg_io.hpp"
-#include "cfg_tar.hpp"
+#include "cfg_schema.hpp"
 
 namespace sx::cfg {
 
@@ -26,11 +26,13 @@ struct CfgArchiveChange {
 // hash under the inter-process lock and publishes the archive atomically.
 class CfgArchiveSession {
 public:
+    const ArchiveSchema& schema() const noexcept { return schema_; }
+
     // Read and validate one archive, then capture its initial content hash.
-    static CfgArchiveSession open(std::string archive_path);
+    static CfgArchiveSession open(ArchiveSchema schema, std::string archive_path);
     // Open an archive through an alternate I/O implementation. This keeps
     // fault injection and platform adaptation outside session control flow.
-    static CfgArchiveSession open(std::string archive_path, CfgIoPtr io);
+    static CfgArchiveSession open(ArchiveSchema schema, std::string archive_path, CfgIoPtr io);
 
     // Return the persistent archive path represented by this session.
     const std::string& path() const noexcept { return archive_path_; }
@@ -51,8 +53,8 @@ public:
     // Reset every staged change to the last opened or saved generation.
     void discard();
 
-    // Validate both the archive namespace and the parseability of the main
-    // libconfig document. Runtime-only checks remain the daemon's concern.
+    // Validate the namespace and the schema's content/session callbacks.
+    // Runtime-only checks remain the application's concern.
     void validate() const;
     // Describe added, modified and removed paths without exposing their bytes.
     std::vector<CfgArchiveChange> changes() const;
@@ -64,14 +66,16 @@ public:
 private:
     // Build a session only from content already read and validated by open().
     CfgArchiveSession(
+        ArchiveSchema schema,
         std::string archive_path,
         std::string base_hash,
         CfgTar original,
         CfgIoPtr io);
 
-    // Enforce manifest policy and parse the complete main libconfig document.
-    static void validate_archive(const CfgTar& archive);
+    // Enforce the owned schema and its additional session policy.
+    void validate_archive(const CfgTar& archive) const;
 
+    ArchiveSchema schema_;
     std::string archive_path_;
     std::string base_hash_;
     CfgTar original_;

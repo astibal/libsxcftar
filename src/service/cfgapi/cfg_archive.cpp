@@ -2,7 +2,6 @@
 
 #include <nlohmann/json.hpp>
 #include <detail/crypto.hpp>
-#include <utils/utf8.hpp>
 
 #include <cerrno>
 #include <cstring>
@@ -12,59 +11,10 @@
 namespace sx::cfg {
 namespace {
 
-constexpr std::string_view main_config_path = "smithproxy.cfg";
-constexpr std::string_view startup_config_path = "smithproxy.startup.cfg";
 constexpr std::size_t max_manifest_size = 4096;
 
-// Keep all source and manifest failures in the CfgTar error domain. Callers
-// can then report one coherent persistent-configuration startup failure.
 [[noreturn]] void fail(const std::string& message) {
     throw CfgTarError(message);
-}
-
-// Match a non-empty archive path below a namespace directory. Requiring at
-// least one character after the slash rejects directory placeholders.
-bool has_prefix(std::string_view path, std::string_view prefix) {
-    return path.size() > prefix.size() && path.compare(0, prefix.size(), prefix) == 0;
-}
-
-bool safe_logical_path(std::string_view path) {
-    if (path.empty() || path.front() == '/' || path.back() == '/' ||
-        path.find('\\') != std::string_view::npos ||
-        path.find("//") != std::string_view::npos) {
-        return false;
-    }
-    for (std::size_t start = 0; start < path.size();) {
-        const auto end = path.find('/', start);
-        const auto part = path.substr(start, end == std::string_view::npos
-            ? path.size() - start : end - start);
-        if (part == "." || part == "..") return false;
-        if (end == std::string_view::npos) break;
-        start = end + 1;
-    }
-    return true;
-}
-
-// Root-level .cfg files are shared configuration, independent of their consumer.
-// Nested resource paths continue to use the existing closed namespaces.
-bool root_config_path(std::string_view path) {
-    return safe_logical_path(path) && path.find('/') == std::string_view::npos &&
-           path.size() >= 4 && path.substr(path.size() - 4) == ".cfg";
-}
-
-bool allowed_path(std::string_view path) {
-    return path == CfgManifest::path || root_config_path(path) ||
-           CfgManifest::is_resource_path(path);
-}
-
-// Apply archive-specific size and text policy; Unicode decoding is shared.
-void validate_config_text(std::string_view path, std::string_view data) {
-    if(data.size() > CfgManifest::max_config_size) {
-        fail("CfgTar configuration exceeds its size limit: " + std::string(path));
-    }
-    if(!sx::text::valid_utf8(data, sx::text::utf8_policy::plain_text)) {
-        fail("CfgTar configuration is not valid UTF-8 text: " + std::string(path));
-    }
 }
 
 // Distinguish an absent archive from every other inspection error. Only
@@ -82,15 +32,17 @@ bool path_exists(const std::string& path) {
 
 } // namespace
 
-std::string CfgManifest::canonical() {
+std::string CfgManifest::canonical(const ArchiveSchema& schema) {
+    schema.validate();
     nlohmann::json manifest = {
-        {"format", format},
-        {"version", version},
+        {"format", schema.format},
+        {"version", schema.version},
     };
     return manifest.dump(2) + "\n";
 }
 
-void CfgManifest::validate(const CfgTar& archive) {
+void CfgManifest::validate(const ArchiveSchema& schema, const CfgTar& archive) {
+    schema.validate();
     // Refuse archives without an identity record before inspecting payload
     // files. This also keeps an ordinary TAR from masquerading as a CfgTar.
     if (!archive.contains(path)) {
@@ -112,43 +64,28 @@ void CfgManifest::validate(const CfgTar& archive) {
         fail("invalid CfgTar manifest: " + std::string(error.what()));
     }
 
-    // Version 1 is a closed contract: exactly two typed fields are accepted.
-    // Future extensions therefore require an explicit versioned code change
-    // instead of being silently ignored by an older Smithproxy.
-    if (!manifest.is_object() || manifest.size() != 2 ||
-        !manifest.contains("format") || !manifest["format"].is_string() ||
-        manifest["format"].get<std::string_view>() != format ||
-        !manifest.contains("version") || !manifest["version"].is_number_unsigned() ||
-        manifest["version"].get<unsigned int>() != version) {
-        fail("unsupported CfgTar manifest");
-    }
+    // The envelope stays closed even when an application's format changes.
+    const bool valid_shape = manifest.is_object() && manifest.size() == 2 &&
+        manifest.contains("format") && manifest["format"].is_string() &&
+        manifest.contains("version") && manifest["version"].is_number_unsigned();
+    if (!valid_shape) fail("unsupported CfgTar manifest");
+    const bool matching_identity = manifest["format"].get<std::string_view>() == schema.format &&
+        manifest["version"].get<std::uint64_t>() == schema.version;
+    if (!matching_identity) fail("unsupported CfgTar manifest");
 
-    // Both configuration views belong to one native archive. Requiring them
-    // together prevents a partially migrated installation from starting.
-    if (!archive.contains(main_config_path)) {
-        fail("CfgTar main configuration is missing");
+    for (const auto& required : schema.required_files) {
+        if (!archive.contains(required)) fail("CfgTar required file is missing: " + required);
     }
-    if (!archive.contains(startup_config_path)) {
-        fail("CfgTar startup configuration is missing");
-    }
-
-    // Finally validate every stored resource, not merely files consumed by
-    // this process today. This makes the archive boundary predictable for
-    // backup, restore, privilege separation, and later schema migrations.
     for (const auto& [entry_path, entry] : archive.entries()) {
-        if (!allowed_path(entry_path)) {
-            fail("unsupported CfgTar path: " + entry_path);
-        }
-        if(root_config_path(entry_path)) {
-            validate_config_text(entry_path, entry.data);
-        }
+        (void)entry;
+        if (!schema.allows(entry_path)) fail("unsupported CfgTar path: " + entry_path);
     }
+    if (schema.validate_content) schema.validate_content(archive);
 }
 
-bool CfgManifest::is_resource_path(std::string_view path) {
-    return safe_logical_path(path) &&
-           (has_prefix(path, "pki/") || has_prefix(path, "templates/") ||
-            has_prefix(path, "commands/"));
+bool CfgManifest::is_resource_path(const ArchiveSchema& schema, std::string_view path) {
+    schema.validate();
+    return schema.is_resource_path(path);
 }
 
 CfgResource::CfgResource(Kind kind, std::string logical_path, std::string value)
@@ -180,24 +117,25 @@ const std::string& CfgResource::legacy_path() const {
     return value_;
 }
 
-CfgArchive::CfgArchive(Kind kind, std::string path, std::optional<CfgTar> archive)
-    : kind_(kind), path_(std::move(path)), archive_(std::move(archive)) {}
+CfgArchive::CfgArchive(ArchiveSchema schema, Kind kind, std::string path, std::optional<CfgTar> archive)
+    : schema_(std::move(schema)), kind_(kind), path_(std::move(path)), archive_(std::move(archive)) {}
 
-CfgArchive CfgArchive::open(Paths paths) {
+CfgArchive CfgArchive::open(ArchiveSchema schema, Paths paths) {
+    schema.validate();
     // Explicit native input is useful for config checks, recovery tooling, and
     // isolated test instances. It receives the same strict validation as the
     // default archive and never falls back to a legacy file.
     if(paths.explicit_archive) {
         auto archive = CfgTar::read_file(*paths.explicit_archive);
-        CfgManifest::validate(archive);
+        CfgManifest::validate(schema, archive);
         return CfgArchive(
-            Kind::cftar, std::move(*paths.explicit_archive), std::move(archive));
+            std::move(schema), Kind::cftar, std::move(*paths.explicit_archive), std::move(archive));
     }
 
     // Command-line intent is authoritative and keeps config-check workflows
     // independent of the system-wide CfgTar.
     if (paths.explicit_config) {
-        return CfgArchive(Kind::legacy, std::move(*paths.explicit_config), std::nullopt);
+        return CfgArchive(std::move(schema), Kind::legacy, std::move(*paths.explicit_config), std::nullopt);
     }
 
     // Existence, not successful parsing, controls migration. A present but bad
@@ -207,11 +145,11 @@ CfgArchive CfgArchive::open(Paths paths) {
         // Selection returns a ready-to-consume source. No caller can observe a
         // CfgTar Kind whose manifest or namespace has not passed validation.
         auto archive = CfgTar::read_file(paths.archive);
-        CfgManifest::validate(archive);
-        return CfgArchive(Kind::cftar, std::move(paths.archive), std::move(archive));
+        CfgManifest::validate(schema, archive);
+        return CfgArchive(std::move(schema), Kind::cftar, std::move(paths.archive), std::move(archive));
     }
 
-    return CfgArchive(Kind::legacy, std::move(paths.legacy), std::nullopt);
+    return CfgArchive(std::move(schema), Kind::legacy, std::move(paths.legacy), std::nullopt);
 }
 
 namespace {
@@ -240,16 +178,16 @@ std::string CfgArchive::startup_path_for(std::string_view legacy_path) {
 
 // Reconstruct the same validated source model as open(), but use archive bytes
 // obtained through the privileged file channel instead of opening the path.
-CfgArchive CfgArchive::read_archive(std::string path, std::string_view bytes) {
+CfgArchive CfgArchive::read_archive(ArchiveSchema schema, std::string path, std::string_view bytes) {
     auto archive = CfgTar::read(bytes);
-    CfgManifest::validate(archive);
-    return CfgArchive(Kind::cftar, std::move(path), std::move(archive));
+    CfgManifest::validate(schema, archive);
+    return CfgArchive(std::move(schema), Kind::cftar, std::move(path), std::move(archive));
 }
 
-CfgArchiveInfo CfgArchive::inspect_archive(std::string_view bytes) {
+CfgArchiveInfo CfgArchive::inspect_archive(ArchiveSchema schema, std::string_view bytes) {
     auto archive = CfgTar::read(bytes);
-    CfgManifest::validate(archive);
-    return CfgArchive(Kind::cftar, {}, std::move(archive)).info();
+    CfgManifest::validate(schema, archive);
+    return CfgArchive(std::move(schema), Kind::cftar, {}, std::move(archive)).info();
 }
 
 CfgArchive::Kind CfgArchive::kind() const noexcept {
@@ -270,7 +208,7 @@ CfgArchiveInfo CfgArchive::info() const {
     result.path = path_;
     if (!result.native) return result;
 
-    result.format_version = CfgManifest::version;
+    result.format_version = schema_.version;
     if(const auto hash = sx::cftar::crypto::sha256(archive().write())) {
         result.content_hash = "sha256:" + *hash;
     }
@@ -290,15 +228,17 @@ const CfgTar& CfgArchive::archive() const {
 }
 
 std::string_view CfgArchive::main_config() const {
-    return archive().at(main_config_path).data;
+    if (schema_.main_config.empty()) fail("schema has no main configuration role");
+    return archive().at(schema_.main_config).data;
 }
 
 std::string_view CfgArchive::startup_config() const {
-    return archive().at(startup_config_path).data;
+    if (schema_.startup_config.empty()) fail("schema has no startup configuration role");
+    return archive().at(schema_.startup_config).data;
 }
 
 CfgResource CfgArchive::resolve(std::string logical_path, std::string legacy_path) const {
-    if (!CfgManifest::is_resource_path(logical_path)) {
+    if (!CfgManifest::is_resource_path(schema_, logical_path)) {
         fail("invalid CfgTar resource path: " + logical_path);
     }
 
@@ -320,7 +260,7 @@ CfgResource CfgArchive::resolve(std::string logical_path, std::string legacy_pat
 
 std::vector<std::string> CfgArchive::resources(std::string_view logical_dir) const {
     if (logical_dir.empty() || logical_dir.back() != '/' ||
-        !CfgManifest::is_resource_path(std::string(logical_dir) + "item")) {
+        !CfgManifest::is_resource_path(schema_, std::string(logical_dir) + "item")) {
         fail("invalid CfgTar resource directory: " + std::string(logical_dir));
     }
 
@@ -329,7 +269,8 @@ std::vector<std::string> CfgArchive::resources(std::string_view logical_dir) con
     for (const auto& [path, entry] : archive().entries()) {
         (void)entry;
         if (path.size() > logical_dir.size() &&
-            path.compare(0, logical_dir.size(), logical_dir) == 0) {
+            path.compare(0, logical_dir.size(), logical_dir) == 0 &&
+            schema_.is_resource_path(path)) {
             result.push_back(path);
         }
     }
@@ -345,13 +286,15 @@ CfgSaveData CfgArchive::prepare_save(std::string main_config,
         return {std::move(main_config), std::nullopt};
     }
 
+    if (schema_.main_config.empty()) fail("schema has no main configuration role");
+
     // Work on a copy so a failed validation or write cannot mutate the source
     // that still describes the configuration running in this process.
     auto updated = archive();
-    updated.replace(main_config_path, std::move(main_config));
+    updated.replace(schema_.main_config, std::move(main_config));
 
     for(const auto& [path, content] : additions) {
-        if(!CfgManifest::is_resource_path(path)) {
+        if(!CfgManifest::is_resource_path(schema_, path)) {
             fail("invalid schema resource path: " + path);
         }
         if(!updated.contains(path)) {
@@ -359,7 +302,7 @@ CfgSaveData CfgArchive::prepare_save(std::string main_config,
         }
     }
 
-    CfgManifest::validate(updated);
+    CfgManifest::validate(schema_, updated);
     return {updated.write(), archive().write()};
 }
 
@@ -368,7 +311,7 @@ CfgSaveData CfgArchive::prepare_resource(
     std::optional<std::string> content,
     bool executable) const {
     if(!is_cftar()) fail("native resources require a CfgTar source");
-    if(!CfgManifest::is_resource_path(path)) {
+    if(!CfgManifest::is_resource_path(schema_, path)) {
         fail("invalid CfgTar resource path: " + path);
     }
 
@@ -382,7 +325,7 @@ CfgSaveData CfgArchive::prepare_resource(
         fail("cannot remove missing CfgTar resource: " + path);
     }
 
-    CfgManifest::validate(updated);
+    CfgManifest::validate(schema_, updated);
     return {updated.write(), archive().write()};
 }
 
@@ -392,14 +335,17 @@ void CfgArchive::accept_saved_main(std::string main_config) {
     if (!is_cftar()) {
         return;
     }
-    archive_->replace(main_config_path, std::move(main_config));
-    CfgManifest::validate(*archive_);
+    if (schema_.main_config.empty()) fail("schema has no main configuration role");
+    auto updated = archive();
+    updated.replace(schema_.main_config, std::move(main_config));
+    CfgManifest::validate(schema_, updated);
+    archive_ = std::move(updated);
 }
 
 void CfgArchive::accept_saved_archive(std::string_view bytes) {
     if(!is_cftar()) fail("legacy configuration cannot adopt a CfgTar archive");
     auto updated = CfgTar::read(bytes);
-    CfgManifest::validate(updated);
+    CfgManifest::validate(schema_, updated);
     archive_ = std::move(updated);
 }
 

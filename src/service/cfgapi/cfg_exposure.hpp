@@ -23,7 +23,7 @@ struct CfgExposure {
 class CfgExposureRegistry {
 public:
     // Materialize one read-only entry or directory snapshot and register it.
-    CfgExposure expose(const CfgTar& archive, std::string logical_path);
+    CfgExposure expose(const ArchiveSchema& schema, const CfgTar& archive, std::string logical_path);
     // Destroy one numbered exposure; return false when the id is unknown.
     bool close(std::uint64_t id);
     // Destroy every exposure owned by this interactive shell session.

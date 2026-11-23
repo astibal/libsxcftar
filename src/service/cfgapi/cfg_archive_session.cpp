@@ -9,7 +9,6 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
-#include <libconfig.h++>
 #include <limits>
 
 namespace sx::cfg {
@@ -138,30 +137,32 @@ std::string recovery_path(const std::string& archive_path) {
 }  // namespace
 
 CfgArchiveSession::CfgArchiveSession(
+    ArchiveSchema schema,
     std::string archive_path,
     std::string base_hash,
     CfgTar original,
     CfgIoPtr io)
-    : archive_path_(std::move(archive_path)),
+    : schema_(std::move(schema)), archive_path_(std::move(archive_path)),
       base_hash_(std::move(base_hash)),
       original_(std::move(original)),
       working_(original_),
       io_(std::move(io)) {}
 
-CfgArchiveSession CfgArchiveSession::open(std::string archive_path) {
-    return open(std::move(archive_path), std::make_shared<CfgIo>());
+CfgArchiveSession CfgArchiveSession::open(ArchiveSchema schema, std::string archive_path) {
+    return open(std::move(schema), std::move(archive_path), std::make_shared<CfgIo>());
 }
 
-CfgArchiveSession CfgArchiveSession::open(std::string archive_path, CfgIoPtr io) {
+CfgArchiveSession CfgArchiveSession::open(ArchiveSchema schema, std::string archive_path, CfgIoPtr io) {
     if(!io) throw CfgTarError("CFtar I/O provider is not available");
     // Capture bytes and hash from the same read. save() later rechecks this
     // exact generation only after it owns the inter-process lock.
     auto payload = read_regular_file(*io, archive_path);
     auto archive = CfgTar::read(payload);
-    validate_archive(archive);
+    CfgManifest::validate(schema, archive);
+    if (schema.validate_session) schema.validate_session(archive);
     auto hash = payload_hash(payload);
     return CfgArchiveSession(
-        std::move(archive_path), std::move(hash),
+        std::move(schema), std::move(archive_path), std::move(hash),
         std::move(archive), std::move(io));
 }
 
@@ -187,7 +188,7 @@ void CfgArchiveSession::put(
 }
 
 void CfgArchiveSession::remove(std::string_view path) {
-    if(!CfgManifest::is_resource_path(path)) {
+    if(!CfgManifest::is_resource_path(schema_, path)) {
         throw CfgTarError("control file cannot be removed: " + std::string(path));
     }
     // Resource removal follows the same copy-validate-adopt rule as put().
@@ -203,17 +204,9 @@ void CfgArchiveSession::discard() {
     working_ = original_;
 }
 
-void CfgArchiveSession::validate_archive(const CfgTar& archive) {
-    CfgManifest::validate(archive);
-    try {
-        libconfig::Config parsed;
-        parsed.readString(archive.at("smithproxy.cfg").data);
-    }
-    catch(const libconfig::ParseException& error) {
-        throw CfgTarError(
-            "invalid smithproxy.cfg at line " + std::to_string(error.getLine()) +
-            ": " + error.getError());
-    }
+void CfgArchiveSession::validate_archive(const CfgTar& archive) const {
+    CfgManifest::validate(schema_, archive);
+    if (schema_.validate_session) schema_.validate_session(archive);
 }
 
 void CfgArchiveSession::validate() const {

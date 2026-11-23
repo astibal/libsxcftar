@@ -480,7 +480,7 @@ TEST(CfgPackFaults, ReportsMainInputInspectionAndReadFailures) {
         TempDir temp;
         const auto input = pack_input(temp);
         ScopedFault fault(failure);
-        EXPECT_THROW(sx::cfg::CfgPack::build(input), sx::cfg::CfgTarError);
+        EXPECT_THROW(sx::cfg::CfgPack::build(sx::cfg::smithproxy_schema(), input), sx::cfg::CfgTarError);
     }
 }
 
@@ -489,7 +489,7 @@ TEST(CfgPackFaults, RetriesInterruptedMainInputReads) {
     const auto input = pack_input(temp);
     ScopedFault fault(Fault::read_eintr);
 
-    EXPECT_NO_THROW(sx::cfg::CfgPack::build(input));
+    EXPECT_NO_THROW(sx::cfg::CfgPack::build(sx::cfg::smithproxy_schema(), input));
 }
 
 TEST(CfgPackFaults, RejectsInputGrowthAfterInspection) {
@@ -499,7 +499,7 @@ TEST(CfgPackFaults, RejectsInputGrowthAfterInspection) {
     // growth probe performed after the inspected size has been consumed.
     ScopedFault fault(Fault::read_growth, 2);
 
-    EXPECT_THROW(sx::cfg::CfgPack::build(input), sx::cfg::CfgTarError);
+    EXPECT_THROW(sx::cfg::CfgPack::build(sx::cfg::smithproxy_schema(), input), sx::cfg::CfgTarError);
 }
 
 TEST(CfgPackFaults, HandlesExtraProbeInterruptAndError) {
@@ -507,13 +507,13 @@ TEST(CfgPackFaults, HandlesExtraProbeInterruptAndError) {
         TempDir temp;
         const auto input = pack_input(temp);
         ScopedFault fault(Fault::read_eintr, 2);
-        EXPECT_NO_THROW(sx::cfg::CfgPack::build(input));
+        EXPECT_NO_THROW(sx::cfg::CfgPack::build(sx::cfg::smithproxy_schema(), input));
     }
     {
         TempDir temp;
         const auto input = pack_input(temp);
         ScopedFault fault(Fault::read_error, 2);
-        EXPECT_THROW(sx::cfg::CfgPack::build(input), sx::cfg::CfgTarError);
+        EXPECT_THROW(sx::cfg::CfgPack::build(sx::cfg::smithproxy_schema(), input), sx::cfg::CfgTarError);
     }
 }
 
@@ -539,10 +539,10 @@ TEST(CfgPackFaults, ReportsOpenedDirectoryFileReadFailures) {
         ScopedFault fault(scenario.fault, scenario.call);
 
         if(scenario.fault == Fault::read_eintr) {
-            EXPECT_NO_THROW(sx::cfg::CfgPack::build(input));
+            EXPECT_NO_THROW(sx::cfg::CfgPack::build(sx::cfg::smithproxy_schema(), input));
         }
         else {
-            EXPECT_THROW(sx::cfg::CfgPack::build(input), sx::cfg::CfgTarError);
+            EXPECT_THROW(sx::cfg::CfgPack::build(sx::cfg::smithproxy_schema(), input), sx::cfg::CfgTarError);
         }
     }
 }
@@ -559,7 +559,7 @@ TEST(CfgPackFaults, RejectsOversizedOpenedDirectoryFile) {
     ASSERT_EQ(::close(fd), 0);
     input.directories.push_back({"templates/replacement/en", resources});
 
-    EXPECT_THROW(sx::cfg::CfgPack::build(input), sx::cfg::CfgTarError);
+    EXPECT_THROW(sx::cfg::CfgPack::build(sx::cfg::smithproxy_schema(), input), sx::cfg::CfgTarError);
 }
 
 TEST(CfgPackFaults, ReportsNestedDirectoryOpenFailure) {
@@ -570,7 +570,7 @@ TEST(CfgPackFaults, ReportsNestedDirectoryOpenFailure) {
     input.directories.push_back({"templates/replacement/en", resources});
     ScopedFault fault(Fault::openat);
 
-    EXPECT_THROW(sx::cfg::CfgPack::build(input), sx::cfg::CfgTarError);
+    EXPECT_THROW(sx::cfg::CfgPack::build(sx::cfg::smithproxy_schema(), input), sx::cfg::CfgTarError);
 }
 
 TEST(CfgPackFaults, ReportsDirectoryTraversalFailures) {
@@ -590,7 +590,7 @@ TEST(CfgPackFaults, ReportsDirectoryTraversalFailures) {
         std::ofstream(resources + "/item") << "data";
         input.directories.push_back({"templates/replacement/en", resources});
         ScopedFault fault(failure);
-        EXPECT_THROW(sx::cfg::CfgPack::build(input), sx::cfg::CfgTarError);
+        EXPECT_THROW(sx::cfg::CfgPack::build(sx::cfg::smithproxy_schema(), input), sx::cfg::CfgTarError);
     }
 }
 
@@ -601,7 +601,7 @@ TEST(CfgPackFaults, ReportsOptionalInputInspectionFailures) {
         "templates/replacement/en/optional", temp.path() + "/optional", false, true});
     {
         ScopedFault fault(Fault::lstat);
-        EXPECT_THROW(sx::cfg::CfgPack::build(input), sx::cfg::CfgTarError);
+        EXPECT_THROW(sx::cfg::CfgPack::build(sx::cfg::smithproxy_schema(), input), sx::cfg::CfgTarError);
     }
 
     input.files.clear();
@@ -609,6 +609,6 @@ TEST(CfgPackFaults, ReportsOptionalInputInspectionFailures) {
         "templates/replacement/en", temp.path() + "/optional-directory", true});
     {
         ScopedFault fault(Fault::lstat);
-        EXPECT_THROW(sx::cfg::CfgPack::build(input), sx::cfg::CfgTarError);
+        EXPECT_THROW(sx::cfg::CfgPack::build(sx::cfg::smithproxy_schema(), input), sx::cfg::CfgTarError);
     }
 }

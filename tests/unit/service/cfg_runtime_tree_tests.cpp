@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <service/cfgapi/cfg_runtime_tree.hpp>
+#include <service/cfgapi/cfg_archive.hpp>
 
 #include <filesystem>
 #include <fstream>
@@ -10,6 +11,15 @@
 #include <cstdlib>
 
 namespace {
+
+sx::cfg::ArchiveSchema runtime_schema() {
+    sx::cfg::ArchiveSchema schema;
+    schema.format = "runtime-test";
+    schema.optional_files = {"payload", "smithproxy.cfg", "templates"};
+    schema.allowed_directories = {"pki/", "templates/"};
+    return schema;
+}
+
 
 class FailedRuntimeIo : public sx::cfg::CfgIo {
 public:
@@ -22,11 +32,12 @@ public:
 
 TEST(CfgRuntimeTree, MaterializesAndRemovesPrivateGeneration) {
     sx::cfg::CfgTar archive;
+    archive.add("manifest.json", sx::cfg::CfgManifest::canonical(runtime_schema()));
     archive.add("pki/ca/default/sni/example.org/key.pem", "key");
 
     std::string root;
     {
-        auto runtime = sx::cfg::CfgRuntimeTree::create(archive);
+        auto runtime = sx::cfg::CfgRuntimeTree::create(runtime_schema(), archive);
         root = runtime.root();
         EXPECT_TRUE(std::filesystem::exists(
             root + "/pki/ca/default/sni/example.org/key.pem"));
@@ -40,10 +51,11 @@ TEST(CfgRuntimeTree, MaterializesAndRemovesPrivateGeneration) {
 
 TEST(CfgRuntimeTree, MoveTransfersGenerationOwnership) {
     sx::cfg::CfgTar archive;
+    archive.add("manifest.json", sx::cfg::CfgManifest::canonical(runtime_schema()));
     archive.add("templates/replacement/en/page.html", "page");
     std::string root;
     {
-        auto first = sx::cfg::CfgRuntimeTree::create(archive);
+        auto first = sx::cfg::CfgRuntimeTree::create(runtime_schema(), archive);
         root = first.root();
         auto second = std::move(first);
         EXPECT_EQ(second.root(), root);
@@ -54,12 +66,14 @@ TEST(CfgRuntimeTree, MoveTransfersGenerationOwnership) {
 
 TEST(CfgRuntimeTree, MoveAssignmentCleansPreviousGeneration) {
     sx::cfg::CfgTar first_archive;
+    first_archive.add("manifest.json", sx::cfg::CfgManifest::canonical(runtime_schema()));
     first_archive.add("templates/replacement/en/first.html", "first");
     sx::cfg::CfgTar second_archive;
+    second_archive.add("manifest.json", sx::cfg::CfgManifest::canonical(runtime_schema()));
     second_archive.add("templates/replacement/en/second.html", "second");
 
-    auto first = sx::cfg::CfgRuntimeTree::create(first_archive);
-    auto second = sx::cfg::CfgRuntimeTree::create(second_archive);
+    auto first = sx::cfg::CfgRuntimeTree::create(runtime_schema(), first_archive);
+    auto second = sx::cfg::CfgRuntimeTree::create(runtime_schema(), second_archive);
     const auto old_first_root = first.root();
     const auto second_root = second.root();
 
@@ -72,31 +86,33 @@ TEST(CfgRuntimeTree, MoveAssignmentCleansPreviousGeneration) {
 
 TEST(CfgRuntimeTree, FailedMaterializationCleansPartialGeneration) {
     sx::cfg::CfgTar archive;
+    archive.add("manifest.json", sx::cfg::CfgManifest::canonical(runtime_schema()));
     archive.add("templates", "blocks the directory");
     archive.add("templates/replacement/en/page.html", "page");
 
     EXPECT_THROW(
-        sx::cfg::CfgRuntimeTree::create(archive),
+        sx::cfg::CfgRuntimeTree::create(runtime_schema(), archive),
         sx::cfg::CfgTarError);
 }
 
 TEST(CfgRuntimeTree, ReportsTemporaryGenerationCreationFailure) {
     sx::cfg::CfgTar archive;
+    archive.add("manifest.json", sx::cfg::CfgManifest::canonical(runtime_schema()));
     archive.add("smithproxy.cfg", "settings : {};\n");
 
     EXPECT_THROW(
-        sx::cfg::CfgRuntimeTree::create(
-            archive, std::make_shared<FailedRuntimeIo>()),
+        sx::cfg::CfgRuntimeTree::create(runtime_schema(), archive, std::make_shared<FailedRuntimeIo>()),
         sx::cfg::CfgTarError);
     EXPECT_THROW(
-        sx::cfg::CfgRuntimeTree::create(archive, nullptr),
+        sx::cfg::CfgRuntimeTree::create(runtime_schema(), archive, nullptr),
         sx::cfg::CfgTarError);
 }
 
 TEST(CfgRuntimeTree, OwnershipTransferPreservesPrivateModesAndMovedFromIsHarmless) {
     sx::cfg::CfgTar archive;
+    archive.add("manifest.json", sx::cfg::CfgManifest::canonical(runtime_schema()));
     archive.add("pki/example/key.pem", "private fixture");
-    auto original = sx::cfg::CfgRuntimeTree::create(archive);
+    auto original = sx::cfg::CfgRuntimeTree::create(runtime_schema(), archive);
     auto runtime = std::move(original);
     EXPECT_NO_THROW(original.transfer_owner(getuid(), getgid()));
     runtime.transfer_owner(getuid(), getgid());
@@ -113,8 +129,9 @@ TEST(CfgRuntimeTree, OwnershipTransferPreservesPrivateModesAndMovedFromIsHarmles
 
 TEST(CfgRuntimeTree, OwnershipTransferRejectsSymlinksBeforeChangingFiles) {
     sx::cfg::CfgTar archive;
+    archive.add("manifest.json", sx::cfg::CfgManifest::canonical(runtime_schema()));
     archive.add("payload", "fixture");
-    auto runtime = sx::cfg::CfgRuntimeTree::create(archive);
+    auto runtime = sx::cfg::CfgRuntimeTree::create(runtime_schema(), archive);
     std::filesystem::create_symlink("/etc/passwd", runtime.root() + "/unexpected");
     EXPECT_THROW(runtime.transfer_owner(getuid(), getgid()), sx::cfg::CfgTarError);
 }
@@ -127,8 +144,9 @@ TEST(CfgRuntimeTree, OwnershipFailureIsReported) {
         int result = 1;
         {
             sx::cfg::CfgTar archive;
+    archive.add("manifest.json", sx::cfg::CfgManifest::canonical(runtime_schema()));
             archive.add("payload", "fixture");
-            auto runtime = sx::cfg::CfgRuntimeTree::create(archive);
+            auto runtime = sx::cfg::CfgRuntimeTree::create(runtime_schema(), archive);
             try { runtime.transfer_owner(0, 0); }
             catch(const sx::cfg::CfgTarError&) { result = 0; }
         }

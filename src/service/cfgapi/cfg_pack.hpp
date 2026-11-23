@@ -8,7 +8,7 @@
 #include <map>
 #include <vector>
 
-#include <service/cfgapi/cfg_tar.hpp>
+#include <service/cfgapi/cfg_schema.hpp>
 
 namespace sx::cfg {
 
@@ -25,7 +25,7 @@ public:
     };
 
     struct Directory {
-        // Native prefix receiving every regular descendant of source_path.
+        // Native prefix without a trailing slash, receiving every regular descendant.
         std::string archive_prefix;
         // Legacy root opened without following a final symlink.
         std::string source_path;
@@ -34,6 +34,8 @@ public:
     };
 
     struct Input {
+        // Optional filesystem inputs mapped to the schema's named roles.
+        // Leave empty when using the explicit files list instead.
         std::string main_config;
         std::string startup_config;
         std::vector<File> files;
@@ -56,9 +58,9 @@ public:
         std::size_t files_removed = 0;
     };
 
-    // Read every input exactly once, assemble the canonical v1 namespace and
+    // Read every input exactly once, assemble the selected schema namespace and
     // validate the result before returning it to a writer.
-    static CfgTar build(const Input& input);
+    static CfgTar build(const ArchiveSchema& schema, const Input& input);
 
     // Read a resource subtree through confined directory descriptors.
     static CfgTar read_directory(const std::string& source, const std::string& prefix);
@@ -66,7 +68,7 @@ public:
     // Create the first native archive without replacing any path that appeared
     // concurrently. Returning false means another valid archive already owns
     // the destination; all other failures remain explicit exceptions.
-    static bool migrate(const Migration& migration);
+    static bool migrate(const ArchiveSchema& schema, const Migration& migration);
 
     // Startup-only caller: retire the selected legacy input after native activation.
     // An omitted legacy path selects the sibling .cfg of an explicit CFtar.
@@ -74,10 +76,12 @@ public:
     static std::string retire_legacy_config(
         const std::string& archive_path, const std::string& legacy_path = {});
 
-    // Preserve the pre-CFtar /etc tree in one plain TAR and remove the
+    // Smithproxy-only migration helper: preserve its pre-CFtar /etc tree
+    // in one plain TAR and remove the
     // individual files only after both native and legacy archives validate.
     // Repeated calls finish an interrupted cleanup against the same memento.
-    static LegacyRetireResult retire_legacy_tree(
+    static LegacyRetireResult retire_smithproxy_legacy_tree(
+        const ArchiveSchema& schema,
         const std::string& root,
         const std::string& active_archive,
         const std::string& backup_name);

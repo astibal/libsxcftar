@@ -1,28 +1,20 @@
 # libsxcftar
 
-Small C++17 static library for CFtar configuration archives, extracted from
-[Smithproxy](https://github.com/astibal/smithproxy) master at
-`ae0415f69624618d7c611ff7a336280352a50f5b`.
+C++17 static library for configuration TAR archives: bounded parsing and writing,
+application-defined schemas, validated archive sessions, file locking, atomic
+packing and temporary runtime trees. No dependency on Socle or the proxy runtime.
 
-It provides bounded TAR parsing and writing, manifest validation, archive
-sessions, file locking, atomic configuration packing and runtime trees.
-The existing `sx::cfg` API and `service/cfgapi/*.hpp` include paths are retained.
-The output is `libsxcftar.a`; there is no dependency on Socle or the proxy runtime.
+**Version 0.2 requires an explicit `ArchiveSchema` for every high-level archive
+operation.** There is no implicit Smithproxy default or global schema override.
+See [MIGRATION.md](MIGRATION.md) for Smithproxy, NetworkD, CLI and other consumers.
 
-The archive format remains `smithproxy-cftar` version 1, including its required
-`smithproxy.cfg` and `smithproxy.startup.cfg` entries and resource namespaces.
-This extraction does not change format policy. Other root-level `.cfg` files
-are supported. `CfgTar` can also be used directly without manifest validation.
-The Smithproxy CLI and its default templates remain in Smithproxy.
+## Build
 
-## Build and test
-
-Linux, CMake >= 3.16 and a C++17 compiler are required. Dependencies are
-libarchive, OpenSSL Crypto, libconfig++, nlohmann_json and pthreads.
-GoogleTest is required only when tests are enabled.
+Linux, CMake >= 3.16 and a C++17 compiler are required. Dependencies: libarchive,
+OpenSSL Crypto, nlohmann_json, libconfig++ (the explicit Smithproxy session
+validator), and pthreads. GoogleTest is needed only for tests.
 
 ```sh
-# Debian / Ubuntu
 sudo apt-get install cmake g++ pkg-config libarchive-dev libssl-dev \
     libconfig++-dev nlohmann-json3-dev libgtest-dev
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -31,12 +23,10 @@ ctest --test-dir build --output-on-failure
 cmake --install build --prefix "$PWD/install"
 ```
 
-Only this library is forced static; system dependencies may be dynamically
-linked. CMake propagates the required link dependencies to consumers.
+The output is `libsxcftar.a`; dependencies may remain dynamically linked.
+`SXCFTAR_BUILD_TESTS` defaults to ON standalone and OFF when embedded.
 
-## Use from another project
-
-Use a Git submodule pinned to a reviewed commit:
+## Integrate
 
 ```sh
 git submodule add https://github.com/astibal/libsxcftar.git external/libsxcftar
@@ -47,47 +37,66 @@ add_subdirectory(external/libsxcftar)
 target_link_libraries(your_target PRIVATE sxcftar::sxcftar)
 ```
 
-Tests default to OFF when embedded and ON for standalone builds. Override with
-`-DSXCFTAR_BUILD_TESTS=ON/OFF`.
+Alternatively, use `find_package(sxcftar 0.2 CONFIG REQUIRED)` with
+`CMAKE_PREFIX_PATH` pointing to the installation. `Smithproxy::CfTar` is a
+compatibility target. Existing `sx::cfg` names and `service/cfgapi/*.hpp` header
+paths are retained, but high-level calls now require the schema as first argument.
 
-Alternatively, use an installed package, setting `CMAKE_PREFIX_PATH` to the
-installation prefix when needed:
-
-```cmake
-find_package(sxcftar CONFIG REQUIRED)
-target_link_libraries(your_target PRIVATE sxcftar::sxcftar)
-```
-
-`Smithproxy::CfTar` is also available as a compatibility target. The build-tree
-underlying target remains `sxcftar`.
+## Define an application schema
 
 ```cpp
-#include <service/cfgapi/cfg_tar.hpp>
+#include <service/cfgapi/cfg_archive.hpp>
 
-sx::cfg::CfgTar archive;
-archive.add("example.cfg", "enabled = true;\n");
-auto restored = sx::cfg::CfgTar::read(archive.write());
+sx::cfg::ArchiveSchema schema;
+schema.format = "rekochat-config";
+schema.version = 1;
+schema.required_files = {"rekochat.cfg"};
+schema.optional_files = {"logging.cfg"};
+schema.allowed_directories = {"certs/", "templates/"};
+schema.main_config = "rekochat.cfg"; // optional convenience role
+
+sx::cfg::CfgTar tar;
+tar.add("manifest.json", sx::cfg::CfgManifest::canonical(schema));
+tar.add("rekochat.cfg", "enabled = true;\n");
+sx::cfg::CfgManifest::validate(schema, tar);
+auto source = sx::cfg::CfgArchive::read_archive(schema, "chat.cftar", tar.write());
 ```
 
-## Migrating Smithproxy / networkd
+The manifest has exactly `format` and `version` fields. It identifies the
+application format; it does not supply trusted validation rules. Required files
+must exist; optional files may exist; directory prefixes permit recursive content.
+Unknown paths are rejected. Prefixes end with `/` and do not match sibling names.
+`manifest.json` is library-owned and must not be listed in the schema's file lists.
 
-Replace the in-tree `sxcftar` target definition with `add_subdirectory` above,
-and link its consumers to `sxcftar::sxcftar`. Remove the eight extracted
-`cfg_*.cpp` implementations from consumer source lists and use this repository's
-headers instead of duplicate in-tree copies. Do not define a second `sxcftar`
-target. Keep runtime/presentation code, CLI, default templates, archive monitor,
-configuration transactions and networkd-specific logic in their consumers.
+Paths, links, special files and TAR size limits remain protected independently
+of the schema. Low-level `CfgTar` operations and `CfgPack::read_directory` remain
+schema-free building blocks; they do not claim application-level validation.
 
-The internal SHA-256 implementation now calls OpenSSL directly in a private
-`sx::cftar::crypto` namespace; the consumer's existing `src/utils/crypto.cpp`
-can remain without duplicate symbols. The extraction contains master code,
-not unmerged networkd changes: port any networkd changes to the extracted
-files here before deleting those local changes.
+Optional schema features:
+
+- `main_config` and `startup_config`: map convenience APIs and pack shortcuts to
+  required files. Empty means no such role; role-dependent accessors fail clearly.
+- `allowed_root_extensions`: explicitly permit root files such as `.cfg`; these
+  are treated as control files rather than removable resources.
+- `validate_content`: application callback, run after namespace validation on all
+  high-level validation paths. Throw `CfgTarError` to reject content.
+- `validate_session`: additional checks for offline editing on open, edits and
+  save. Smithproxy uses this for libconfig syntax, matching its previous behavior.
+- `directory_descriptions`: optional directory-to-description map. Packing emits
+  `resource.json` only for populated directories and preserves existing content.
+
+Archives and sessions own a copy of their schema; `schema()` returns a const
+reference. Callbacks must be deterministic and own their captured state. Use
+separate schemas for unrelated applications. No generic schema implicitly
+requires UTF-8 or libconfig; supply the appropriate content validator.
+
+`smithproxy_schema()` explicitly preserves the previous manifest, required
+files, root `.cfg` UTF-8 checks, resource namespaces and session parsing. Existing
+Smithproxy archives retain their on-disk format and need no conversion.
 
 ## Provenance and license
 
-Source and six existing test files were extracted from the Smithproxy commit
-above. The only changes to the extracted configuration implementation are the
-private crypto include and namespace. SHA-256 was decoupled from Socle;
-standalone CMake packaging and a digest regression test were added.
-The original GPLv3 license is preserved in [LICENSE](LICENSE).
+Originally extracted from Smithproxy master
+`ae0415f69624618d7c611ff7a336280352a50f5b`. Version 0.2 adds mandatory explicit
+schemas and regression tests for unrelated application archives. The original
+GPLv3 [LICENSE](LICENSE) is preserved.

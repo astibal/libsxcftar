@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(libsxcftar VERSION 0.1.0 LANGUAGES CXX)
+project(libsxcftar VERSION 0.2.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -11,6 +11,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBCONFIGPP REQUIRED IMPORTED_TARGET libconfig++)
 
 add_library(sxcftar STATIC
+    src/service/cfgapi/cfg_schema.cpp
     src/service/cfgapi/cfg_tar.cpp
     src/service/cfgapi/cfg_archive.cpp
     src/service/cfgapi/cfg_archive_session.cpp
@@ -38,7 +39,7 @@ install(EXPORT sxcftarTargets NAMESPACE sxcftar:: DESTINATION ${package_dir})
 configure_package_config_file(cmake/sxcftarConfig.cmake.in
     ${CMAKE_CURRENT_BINARY_DIR}/sxcftarConfig.cmake INSTALL_DESTINATION ${package_dir})
 write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/sxcftarConfigVersion.cmake
-    VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
+    VERSION ${PROJECT_VERSION} COMPATIBILITY SameMinorVersion)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/sxcftarConfig.cmake
     ${CMAKE_CURRENT_BINARY_DIR}/sxcftarConfigVersion.cmake DESTINATION ${package_dir})
 

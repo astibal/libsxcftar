@@ -425,7 +425,7 @@ protected:
 
     CfgTar valid_archive() const {
         CfgTar archive;
-        archive.add(std::string(CfgManifest::path), CfgManifest::canonical());
+        archive.add(std::string(CfgManifest::path), CfgManifest::canonical(sx::cfg::smithproxy_schema()));
         archive.add("smithproxy.cfg", "settings : {};\n");
         archive.add("smithproxy.startup.cfg", "SMITH_RUN_TRANSPARENT=1\n");
         archive.add("templates/replacement/en/page.html", "original");
@@ -441,7 +441,7 @@ protected:
 };
 
 TEST_F(ArchiveSessionTest, OpensValidatedArchiveAsCleanWorkingCopy) {
-    const auto session = CfgArchiveSession::open(archive_path_);
+    const auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_);
 
     EXPECT_FALSE(session.dirty());
     EXPECT_EQ(session.entry("templates/replacement/en/page.html").data, "original");
@@ -449,15 +449,15 @@ TEST_F(ArchiveSessionTest, OpensValidatedArchiveAsCleanWorkingCopy) {
 }
 
 TEST_F(ArchiveSessionTest, RejectsMissingDirectoryAndOversizedArchiveInputs) {
-    EXPECT_THROW(CfgArchiveSession::open(directory_ + "/missing.cftar"), CfgTarError);
-    EXPECT_THROW(CfgArchiveSession::open(directory_), CfgTarError);
+    EXPECT_THROW(CfgArchiveSession::open(sx::cfg::smithproxy_schema(), directory_ + "/missing.cftar"), CfgTarError);
+    EXPECT_THROW(CfgArchiveSession::open(sx::cfg::smithproxy_schema(), directory_), CfgTarError);
 
     const auto oversized = directory_ + "/oversized.cftar";
     const int fd = ::open(oversized.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
     ASSERT_GE(fd, 0);
     ASSERT_EQ(::ftruncate(fd, 256LL * 1024LL * 1024LL + 1), 0);
     ASSERT_EQ(::close(fd), 0);
-    EXPECT_THROW(CfgArchiveSession::open(oversized), CfgTarError);
+    EXPECT_THROW(CfgArchiveSession::open(sx::cfg::smithproxy_schema(), oversized), CfgTarError);
 }
 
 TEST_F(ArchiveSessionTest, ReportsInjectedArchiveReadFailures) {
@@ -466,15 +466,13 @@ TEST_F(ArchiveSessionTest, ReportsInjectedArchiveReadFailures) {
                               At::read_eof, At::close}) {
         SCOPED_TRACE(static_cast<int>(failure));
         EXPECT_THROW(
-            CfgArchiveSession::open(
-                archive_path_, std::make_shared<FaultCfgIo>(failure)),
+            CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, std::make_shared<FaultCfgIo>(failure)),
             CfgTarError);
     }
 }
 
 TEST_F(ArchiveSessionTest, RetriesInterruptedReads) {
-    auto session = CfgArchiveSession::open(
-        archive_path_, std::make_shared<FaultCfgIo>(FaultCfgIo::At::read_eintr));
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, std::make_shared<FaultCfgIo>(FaultCfgIo::At::read_eintr));
 
     EXPECT_FALSE(session.dirty());
     EXPECT_EQ(session.entry("templates/replacement/en/page.html").data, "original");
@@ -485,7 +483,7 @@ TEST_F(ArchiveSessionTest, SlowReadCompletesWithoutBecomingAnIoFailure) {
     const auto io = std::make_shared<SlowCfgIo>(SlowCfgIo::At::read, delay);
     const auto started = std::chrono::steady_clock::now();
 
-    const auto session = CfgArchiveSession::open(archive_path_, io);
+    const auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, io);
 
     const auto elapsed = std::chrono::steady_clock::now() - started;
     EXPECT_GE(elapsed, delay);
@@ -494,11 +492,11 @@ TEST_F(ArchiveSessionTest, SlowReadCompletesWithoutBecomingAnIoFailure) {
 }
 
 TEST_F(ArchiveSessionTest, RejectsMissingIoProvider) {
-    EXPECT_THROW(CfgArchiveSession::open(archive_path_, nullptr), CfgTarError);
+    EXPECT_THROW(CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, nullptr), CfgTarError);
 }
 
 TEST_F(ArchiveSessionTest, StagesAndDiscardsResourceChanges) {
-    auto session = CfgArchiveSession::open(archive_path_);
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_);
 
     session.put("templates/replacement/en/page.html", "changed");
     session.put("commands/scripts/inspect.macro", "show config");
@@ -512,7 +510,7 @@ TEST_F(ArchiveSessionTest, StagesAndDiscardsResourceChanges) {
 }
 
 TEST_F(ArchiveSessionTest, RejectsInvalidMainConfigurationBeforeStaging) {
-    auto session = CfgArchiveSession::open(archive_path_);
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_);
 
     EXPECT_THROW(session.put("smithproxy.cfg", "settings : {"), CfgTarError);
     EXPECT_FALSE(session.dirty());
@@ -520,7 +518,7 @@ TEST_F(ArchiveSessionTest, RejectsInvalidMainConfigurationBeforeStaging) {
 }
 
 TEST_F(ArchiveSessionTest, RejectsRemovingControlFiles) {
-    auto session = CfgArchiveSession::open(archive_path_);
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_);
 
     EXPECT_THROW(session.remove("smithproxy.cfg"), CfgTarError);
     EXPECT_THROW(session.remove(CfgManifest::path), CfgTarError);
@@ -528,16 +526,16 @@ TEST_F(ArchiveSessionTest, RejectsRemovingControlFiles) {
 }
 
 TEST_F(ArchiveSessionTest, KeepsManifestUnderFormatControl) {
-    auto session = CfgArchiveSession::open(archive_path_);
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_);
 
     EXPECT_THROW(session.put(
-                     std::string(CfgManifest::path), CfgManifest::canonical()),
+                     std::string(CfgManifest::path), CfgManifest::canonical(sx::cfg::smithproxy_schema())),
                  CfgTarError);
     EXPECT_FALSE(session.dirty());
 }
 
 TEST_F(ArchiveSessionTest, SavesRecoveryCopyBeforeAtomicReplacement) {
-    auto session = CfgArchiveSession::open(archive_path_);
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_);
     session.put("templates/replacement/en/page.html", "changed");
 
     session.save();
@@ -551,7 +549,7 @@ TEST_F(ArchiveSessionTest, SavesRecoveryCopyBeforeAtomicReplacement) {
 }
 
 TEST_F(ArchiveSessionTest, FailedRecoveryPublicationPreservesActiveArchive) {
-    auto session = CfgArchiveSession::open(archive_path_);
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_);
     session.put("templates/replacement/en/page.html", "changed");
     const auto recovery = archive_path_ + ".previous.bak.cftar";
     ASSERT_TRUE(std::filesystem::create_directory(recovery));
@@ -577,8 +575,7 @@ TEST_F(ArchiveSessionTest, InjectedRecoveryFailuresPreserveActiveArchive) {
         // close #1 opened the session, #2 rechecked the current generation,
         // and #3 belongs to the recovery temporary file under test.
         const auto call = failure == At::close ? 3U : 1U;
-        auto session = CfgArchiveSession::open(
-            archive_path_, std::make_shared<FaultCfgIo>(failure, call));
+        auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, std::make_shared<FaultCfgIo>(failure, call));
         session.put("templates/replacement/en/page.html", "changed");
 
         EXPECT_THROW(session.save(), CfgTarError);
@@ -598,8 +595,7 @@ TEST_F(ArchiveSessionTest, ReportsRecoveryDirectoryDurabilityFailures) {
         std::filesystem::remove(archive_path_);
         write_archive(valid_archive());
         std::filesystem::remove(archive_path_ + ".previous.bak.cftar");
-        auto session = CfgArchiveSession::open(
-            archive_path_, std::make_shared<FaultCfgIo>(failure, call));
+        auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, std::make_shared<FaultCfgIo>(failure, call));
         session.put("templates/replacement/en/page.html", "changed");
 
         EXPECT_THROW(session.save(), CfgTarError);
@@ -611,8 +607,7 @@ TEST_F(ArchiveSessionTest, ReportsRecoveryDirectoryDurabilityFailures) {
 }
 
 TEST_F(ArchiveSessionTest, PreservesActiveArchiveWhenOwnerCopyFails) {
-    auto session = CfgArchiveSession::open(
-        archive_path_,
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_,
         std::make_shared<FaultCfgIo>(FaultCfgIo::At::set_owner));
     session.put("templates/replacement/en/page.html", "changed");
 
@@ -640,8 +635,7 @@ TEST_F(ArchiveSessionTest, ActivePreRenameFailuresLeaveOldGenerationSelected) {
         std::filesystem::remove(archive_path_);
         write_archive(valid_archive());
         std::filesystem::remove(archive_path_ + ".previous.bak.cftar");
-        auto session = CfgArchiveSession::open(
-            archive_path_, std::make_shared<FaultCfgIo>(failure, call));
+        auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, std::make_shared<FaultCfgIo>(failure, call));
         session.put("templates/replacement/en/page.html", "changed");
 
         EXPECT_THROW(session.save(), CfgTarError);
@@ -665,8 +659,7 @@ TEST_F(ArchiveSessionTest, ActivePostRenameFailuresReportAmbiguousCommit) {
         std::filesystem::remove(archive_path_);
         write_archive(valid_archive());
         std::filesystem::remove(archive_path_ + ".previous.bak.cftar");
-        auto session = CfgArchiveSession::open(
-            archive_path_, std::make_shared<FaultCfgIo>(failure, call));
+        auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, std::make_shared<FaultCfgIo>(failure, call));
         session.put("templates/replacement/en/page.html", "changed");
 
         EXPECT_THROW(session.save(), CfgTarError);
@@ -691,8 +684,7 @@ TEST_F(ArchiveSessionTest, RetriesInterruptedAndPartialWrites) {
         std::filesystem::remove(archive_path_);
         write_archive(valid_archive());
         std::filesystem::remove(archive_path_ + ".previous.bak.cftar");
-        auto session = CfgArchiveSession::open(
-            archive_path_, std::make_shared<FaultCfgIo>(interruption));
+        auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, std::make_shared<FaultCfgIo>(interruption));
         session.put("templates/replacement/en/page.html", "changed");
 
         EXPECT_NO_THROW(session.save());
@@ -703,7 +695,7 @@ TEST_F(ArchiveSessionTest, RetriesInterruptedAndPartialWrites) {
 }
 
 TEST_F(ArchiveSessionTest, RefusesToOverwriteAnExternallyChangedArchive) {
-    auto session = CfgArchiveSession::open(archive_path_);
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_);
     session.put("templates/replacement/en/page.html", "session change");
 
     auto external = valid_archive();
@@ -718,7 +710,7 @@ TEST_F(ArchiveSessionTest, RefusesToOverwriteAnExternallyChangedArchive) {
 }
 
 TEST_F(ArchiveSessionTest, RemovesResourcesAndReportsTheirChanges) {
-    auto session = CfgArchiveSession::open(archive_path_);
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_);
 
     session.remove("templates/replacement/en/page.html");
 
@@ -902,7 +894,7 @@ TEST_F(ArchiveSessionTest, SlowPublicationMakesCompetingWriterTimeOutCleanly) {
 
         const auto io = std::make_shared<SlowCfgIo>(
             slow_operation, std::chrono::milliseconds(120));
-        auto session = CfgArchiveSession::open(archive_path_, io);
+        auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, io);
         session.put("templates/replacement/en/page.html", "slow but valid");
         std::exception_ptr save_error;
         std::thread publisher([&] {
@@ -943,7 +935,7 @@ TEST_F(ArchiveSessionTest, SlowPublicationMakesCompetingWriterTimeOutCleanly) {
 TEST_F(ArchiveSessionTest, PublicationLongerThanLockWaitDoesNotLoseOwnership) {
     const auto io = std::make_shared<SlowCfgIo>(
         SlowCfgIo::At::write, std::chrono::milliseconds(5200), 1);
-    auto session = CfgArchiveSession::open(archive_path_, io);
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, io);
     session.put("templates/replacement/en/page.html", "slow generation");
     std::exception_ptr save_error;
     std::thread publisher([&] {
@@ -978,7 +970,7 @@ TEST_F(ArchiveSessionTest, PublicationLongerThanLockWaitDoesNotLoseOwnership) {
 TEST_F(ArchiveSessionTest, DetectsManualReplacementDuringSlowRecoveryWrite) {
     const auto io = std::make_shared<SlowCfgIo>(
         SlowCfgIo::At::write, std::chrono::milliseconds(250), 1);
-    auto session = CfgArchiveSession::open(archive_path_, io);
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, io);
     session.put("templates/replacement/en/page.html", "session generation");
     std::exception_ptr save_error;
     std::thread publisher([&] {
@@ -1015,7 +1007,7 @@ TEST_F(ArchiveSessionTest, DetectsManualReplacementDuringSlowRecoveryWrite) {
 TEST_F(ArchiveSessionTest, DetectsActiveArchiveRemovalDuringSlowRecoveryWrite) {
     const auto io = std::make_shared<SlowCfgIo>(
         SlowCfgIo::At::write, std::chrono::milliseconds(250), 1);
-    auto session = CfgArchiveSession::open(archive_path_, io);
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, io);
     session.put("templates/replacement/en/page.html", "session generation");
     std::exception_ptr save_error;
     std::thread publisher([&] {
@@ -1043,7 +1035,7 @@ TEST_F(ArchiveSessionTest, DetectsActiveArchiveRemovalDuringSlowRecoveryWrite) {
 TEST_F(ArchiveSessionTest, DetectsActiveArchiveSymlinkDuringSlowRecoveryWrite) {
     const auto io = std::make_shared<SlowCfgIo>(
         SlowCfgIo::At::write, std::chrono::milliseconds(250), 1);
-    auto session = CfgArchiveSession::open(archive_path_, io);
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, io);
     session.put("templates/replacement/en/page.html", "session generation");
     std::exception_ptr save_error;
     std::thread publisher([&] {
@@ -1073,7 +1065,7 @@ TEST_F(ArchiveSessionTest, DetectsActiveArchiveSymlinkDuringSlowRecoveryWrite) {
 TEST_F(ArchiveSessionTest, RemovedRecoveryPreventsActivePublication) {
     const auto io = std::make_shared<MutatingCfgIo>(
         MutatingCfgIo::Action::remove_recovery_after_replace);
-    auto session = CfgArchiveSession::open(archive_path_, io);
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, io);
     session.put("templates/replacement/en/page.html", "must not publish");
 
     EXPECT_THROW(session.save(), CfgTarError);
@@ -1089,7 +1081,7 @@ TEST_F(ArchiveSessionTest, RemovedRecoveryPreventsActivePublication) {
 TEST_F(ArchiveSessionTest, ReplacedRecoveryPreventsActivePublication) {
     const auto io = std::make_shared<MutatingCfgIo>(
         MutatingCfgIo::Action::corrupt_recovery_after_replace);
-    auto session = CfgArchiveSession::open(archive_path_, io);
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, io);
     session.put("templates/replacement/en/page.html", "must not publish");
 
     EXPECT_THROW(session.save(), CfgTarError);
@@ -1103,7 +1095,7 @@ TEST_F(ArchiveSessionTest, ReplacedRecoveryPreventsActivePublication) {
 TEST_F(ArchiveSessionTest, RemovedTemporaryFileCannotPublish) {
     const auto io = std::make_shared<MutatingCfgIo>(
         MutatingCfgIo::Action::remove_temporary_during_write);
-    auto session = CfgArchiveSession::open(archive_path_, io);
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, io);
     session.put("templates/replacement/en/page.html", "must not publish");
 
     EXPECT_THROW(session.save(), CfgTarError);
@@ -1134,7 +1126,7 @@ TEST_F(ArchiveSessionTest, ProcessDeathLeavesAConsistentPublicationBoundary) {
             try {
                 const auto io = std::make_shared<KillPointCfgIo>(
                     kill_point, archive_path_, ready[1]);
-                auto session = CfgArchiveSession::open(archive_path_, io);
+                auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, io);
                 session.put("templates/replacement/en/page.html", "killed generation");
                 session.save();
                 _exit(91);
@@ -1196,7 +1188,7 @@ TEST_F(ArchiveSessionTest, ResourceExhaustionPreservesActiveGeneration) {
         std::filesystem::remove(archive_path_ + ".previous.bak.cftar");
         write_archive(valid_archive());
         const auto io = std::make_shared<ResourceFailureCfgIo>(operation, error);
-        auto session = CfgArchiveSession::open(archive_path_, io);
+        auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, io);
         session.put("templates/replacement/en/page.html", "must not publish");
 
         EXPECT_THROW(session.save(), CfgTarError);
@@ -1216,7 +1208,7 @@ TEST_F(ArchiveSessionTest, SlowFailingSyncKeepsCompetingWriterOut) {
         ENOSPC,
         1,
         std::chrono::milliseconds(250));
-    auto session = CfgArchiveSession::open(archive_path_, io);
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_, io);
     session.put("templates/replacement/en/page.html", "must not publish");
     std::exception_ptr save_error;
     std::thread publisher([&] {
@@ -1311,10 +1303,10 @@ TEST_F(ArchiveSessionTest, SidecarLockMoveConstructionTransfersOwnership) {
 }
 
 TEST_F(ArchiveSessionTest, ExposureIsReadOnlyAndLivesOnlyInRegistry) {
-    const auto session = CfgArchiveSession::open(archive_path_);
+    const auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_);
     CfgExposureRegistry exposures;
 
-    const auto exposure = exposures.expose(
+    const auto exposure = exposures.expose(sx::cfg::smithproxy_schema(),
         session.archive(), "templates/replacement/en/page.html");
     struct stat metadata {};
     ASSERT_EQ(::stat(exposure.filesystem_path.c_str(), &metadata), 0);
@@ -1326,22 +1318,22 @@ TEST_F(ArchiveSessionTest, ExposureIsReadOnlyAndLivesOnlyInRegistry) {
 }
 
 TEST_F(ArchiveSessionTest, RegistryDestructionClosesAllExposures) {
-    const auto session = CfgArchiveSession::open(archive_path_);
+    const auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_);
     std::string path;
     {
         CfgExposureRegistry exposures;
-        path = exposures.expose(session.archive(), "templates").filesystem_path;
+        path = exposures.expose(sx::cfg::smithproxy_schema(), session.archive(), "templates").filesystem_path;
         EXPECT_TRUE(std::filesystem::exists(path));
     }
     EXPECT_FALSE(std::filesystem::exists(path));
 }
 
 TEST_F(ArchiveSessionTest, ExposureRegistryListsAndClosesMultipleTrees) {
-    const auto session = CfgArchiveSession::open(archive_path_);
+    const auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_);
     CfgExposureRegistry exposures;
 
-    const auto first = exposures.expose(session.archive(), "templates/replacement/en/page.html");
-    const auto second = exposures.expose(session.archive(), "templates");
+    const auto first = exposures.expose(sx::cfg::smithproxy_schema(), session.archive(), "templates/replacement/en/page.html");
+    const auto second = exposures.expose(sx::cfg::smithproxy_schema(), session.archive(), "templates");
     const auto entries = exposures.entries();
 
     EXPECT_EQ(entries.size(), 2U);
@@ -1353,19 +1345,19 @@ TEST_F(ArchiveSessionTest, ExposureRegistryListsAndClosesMultipleTrees) {
 }
 
 TEST_F(ArchiveSessionTest, ExposureRejectsMissingLogicalPath) {
-    const auto session = CfgArchiveSession::open(archive_path_);
+    const auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_);
     CfgExposureRegistry exposures;
 
-    EXPECT_THROW(exposures.expose(session.archive(), "templates/missing"), CfgTarError);
+    EXPECT_THROW(exposures.expose(sx::cfg::smithproxy_schema(), session.archive(), "templates/missing"), CfgTarError);
     EXPECT_TRUE(exposures.entries().empty());
 }
 
 TEST_F(ArchiveSessionTest, ExposureRejectsPathsOutsideRuntimeTree) {
-    auto session = CfgArchiveSession::open(archive_path_);
+    auto session = CfgArchiveSession::open(sx::cfg::smithproxy_schema(), archive_path_);
     CfgExposureRegistry exposures;
 
-    EXPECT_THROW(exposures.expose(session.archive(), "../outside"), CfgTarError);
-    EXPECT_THROW(exposures.expose(session.archive(), "templates/../../outside"),
+    EXPECT_THROW(exposures.expose(sx::cfg::smithproxy_schema(), session.archive(), "../outside"), CfgTarError);
+    EXPECT_THROW(exposures.expose(sx::cfg::smithproxy_schema(), session.archive(), "templates/../../outside"),
                  CfgTarError);
     EXPECT_TRUE(exposures.entries().empty());
 }

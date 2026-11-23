@@ -3,7 +3,7 @@
 #include <service/cfgapi/cfg_archive.hpp>
 
 #include <algorithm>
-#include <array>
+#include <nlohmann/json.hpp>
 #include <cerrno>
 #include <cstring>
 #include <dirent.h>
@@ -223,34 +223,13 @@ bool absent_optional_directory(const CfgPack::Directory& directory) {
 // Add short, non-authoritative descriptions only for collections that are
 // actually present. Runtime behavior continues to follow the logical path and
 // payload; resource.json exists for administrators and generic archive tools.
-void add_resource_descriptions(CfgTar& archive) {
-    struct Description {
-        std::string_view directory;
-        std::string_view text;
-    };
-    constexpr std::array descriptions {
-        Description{"pki/ca/default/", "Default Smithproxy certificate authority and service identities."},
-        Description{"pki/trust/", "Product-managed trust anchors used for upstream certificate verification."},
-        Description{"pki/mitm/ssh/hostkeys/", "SSH host keys presented by the interception service."},
-        Description{"pki/mitm/tls/server/sni/", "TLS server identities selected by the intercepted SNI value."},
-        Description{"pki/mitm/tls/server/ip/", "TLS server identities selected by the intercepted destination address."},
-        Description{"pki/mitm/tls/client/sni/", "TLS client identities selected by the upstream SNI value."},
-        Description{"pki/mitm/tls/client/ip/", "TLS client identities selected by the upstream destination address."},
-        Description{"templates/replacement/", "Localized response templates presented to intercepted clients."},
-        Description{"commands/macros/", "Administrative command macros stored as inert configuration resources."},
-        Description{"commands/scripts/", "Administrative scripts stored as inert configuration resources."},
-    };
-
-    for(const auto& description : descriptions) {
-        const bool present = std::any_of(
-            archive.entries().begin(), archive.entries().end(),
-            [&](const auto& item) {
-                return item.first.rfind(description.directory, 0) == 0;
-            });
-        const std::string path = std::string(description.directory) + "resource.json";
-        if(present && !archive.contains(path)) {
-            archive.add(path, "{\n  \"description\": \"" +
-                                  std::string(description.text) + "\"\n}\n");
+void add_resource_descriptions(const ArchiveSchema& schema, CfgTar& archive) {
+    for (const auto& [directory, text] : schema.directory_descriptions) {
+        const bool present = std::any_of(archive.entries().begin(), archive.entries().end(),
+            [&](const auto& item) { return item.first.rfind(directory, 0) == 0; });
+        const auto path = directory + "resource.json";
+        if (present && !archive.contains(path)) {
+            archive.add(path, nlohmann::json{{"description", text}}.dump(2) + "\n");
         }
     }
 }
@@ -265,31 +244,22 @@ CfgTar CfgPack::read_directory(const std::string& source, const std::string& pre
     return result;
 }
 
-CfgTar CfgPack::build(const Input& input) {
-    if (input.main_config.empty() || input.startup_config.empty()) {
-        fail("CfgTar main and startup input paths are required");
-    }
-
+CfgTar CfgPack::build(const ArchiveSchema& schema, const Input& input) {
+    schema.validate();
     CfgTar archive;
-    archive.add(std::string(CfgManifest::path), CfgManifest::canonical());
-    archive.add("smithproxy.cfg", read_input(input.main_config));
-    if(input.allow_missing_startup) {
-        struct stat state {};
-        if(::lstat(input.startup_config.c_str(), &state) == 0) {
-            // read_input() keeps the ordinary regular-file and no-symlink
-            // policy for an existing optional startup configuration.
-            archive.add("smithproxy.startup.cfg", read_input(input.startup_config));
-        }
-        else if(errno == ENOENT) {
-            archive.add("smithproxy.startup.cfg", "");
-        }
-        else {
-            fail_errno("cannot inspect optional CfgTar startup input " +
-                       input.startup_config);
-        }
+    archive.add(std::string(CfgManifest::path), CfgManifest::canonical(schema));
+    // Optional shortcuts map physical input files onto explicit schema roles.
+    // Applications without these roles supply all inputs through files/directories.
+    if (!input.main_config.empty()) {
+        if (schema.main_config.empty()) fail("schema has no main configuration role");
+        archive.add(schema.main_config, read_input(input.main_config));
     }
-    else {
-        archive.add("smithproxy.startup.cfg", read_input(input.startup_config));
+    if (!input.startup_config.empty()) {
+        if (schema.startup_config.empty()) fail("schema has no startup configuration role");
+        const File startup{schema.startup_config, input.startup_config, false,
+                           input.allow_missing_startup};
+        const bool absent = absent_optional_input(startup);
+        archive.add(schema.startup_config, absent ? "" : read_input(input.startup_config));
     }
 
     // Extra resources are intentionally explicit. The caller owns legacy path
@@ -303,7 +273,7 @@ CfgTar CfgPack::build(const Input& input) {
     }
 
     for(const auto& [path, content] : input.resource_defaults) {
-        if(!CfgManifest::is_resource_path(path)) {
+        if(!CfgManifest::is_resource_path(schema, path)) {
             fail("invalid schema resource path: " + path);
         }
         if(!archive.contains(path)) {
@@ -327,9 +297,9 @@ CfgTar CfgPack::build(const Input& input) {
                       directory.archive_prefix);
     }
 
-    add_resource_descriptions(archive);
+    add_resource_descriptions(schema, archive);
 
-    CfgManifest::validate(archive);
+    CfgManifest::validate(schema, archive);
     return archive;
 }
 
@@ -402,13 +372,13 @@ std::string CfgPack::retire_legacy_config(
     fail("too many legacy configuration backups: " + source.string());
 }
 
-bool CfgPack::migrate(const Migration& migration) {
+bool CfgPack::migrate(const ArchiveSchema& schema, const Migration& migration) {
     if (migration.archive_path.empty()) {
         fail("CfgTar migration output path is required");
     }
 
     try {
-        build(migration.input).write_file(migration.archive_path);
+        build(schema, migration.input).write_file(migration.archive_path);
         return true;
     }
     catch (const CfgTarError&) {
@@ -420,14 +390,15 @@ bool CfgPack::migrate(const Migration& migration) {
                 throw;
             }
             auto archive = CfgTar::read_file(migration.archive_path);
-            CfgManifest::validate(archive);
+            CfgManifest::validate(schema, archive);
             return false;
         }
         throw;
     }
 }
 
-CfgPack::LegacyRetireResult CfgPack::retire_legacy_tree(
+CfgPack::LegacyRetireResult CfgPack::retire_smithproxy_legacy_tree(
+    const ArchiveSchema& schema,
     const std::string& root,
     const std::string& active_archive,
     const std::string& backup_name) {
@@ -442,8 +413,11 @@ CfgPack::LegacyRetireResult CfgPack::retire_legacy_tree(
     // Never clean around an archive that has not passed the complete native
     // format validation. The memento is a recovery aid, not a substitute for
     // a working startup configuration.
+    const bool smithproxy_profile = schema.format == "smithproxy-cftar" &&
+        schema.main_config == "smithproxy.cfg" && schema.startup_config == "smithproxy.startup.cfg";
+    if (!smithproxy_profile) fail("legacy tree retirement requires the Smithproxy profile");
     const auto native_path = (fs::path(root) / active_archive).string();
-    CfgManifest::validate(CfgTar::read_file(native_path));
+    CfgManifest::validate(schema, CfgTar::read_file(native_path));
 
     // A default archive does not own other tenants or their shared external
     // resources. Keep the legacy tree while any tenant configuration/registry
