@@ -31,6 +31,10 @@ public:
     // Report whether a logical path belongs to a persistent resource
     // namespace. The manifest, configuration roles and root-extension files are excluded.
     static bool is_resource_path(const ArchiveSchema& schema, std::string_view path);
+
+    // Report whether an administrative API may replace or remove this entry.
+    // Main/startup roles and the manifest remain protected control files.
+    static bool is_managed_path(const ArchiveSchema& schema, std::string_view path);
 };
 
 // Owns the result of one resource lookup. Native content is copied out of the

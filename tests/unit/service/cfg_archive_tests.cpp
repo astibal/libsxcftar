@@ -522,6 +522,30 @@ TEST_F(ArchiveTest, RootConfigsAcceptUtf8ScalarBoundaries) {
     EXPECT_EQ(source.main_config(), "settings : {};\n");
 }
 
+TEST_F(ArchiveTest, AtomicallyManagesOptionalRootConfigurations) {
+    auto archive = valid_archive();
+    write_archive(archive);
+    auto source = CfgArchive::open(sx::cfg::smithproxy_schema(), paths_);
+
+    const auto added = source.prepare_resource(
+        "gui.cfg", std::string("gui = { schema_version = 1; };\n"));
+    const auto added_archive = CfgTar::read(added.replacement);
+    EXPECT_EQ(added_archive.at("gui.cfg").data,
+              "gui = { schema_version = 1; };\n");
+    EXPECT_EQ(added.previous, source.archive_payload());
+
+    source.accept_saved_archive(added.replacement);
+    const auto removed = source.prepare_resource("gui.cfg", std::nullopt);
+    EXPECT_FALSE(CfgTar::read(removed.replacement).contains("gui.cfg"));
+
+    EXPECT_THROW(source.prepare_resource(
+        "smithproxy.cfg", std::string("settings : {};\n")), CfgTarError);
+    EXPECT_THROW(source.prepare_resource(
+        "smithproxy.startup.cfg", std::string("startup\n")), CfgTarError);
+    EXPECT_THROW(source.prepare_resource(
+        "gui.cfg", std::string("gui = {};\n"), true), CfgTarError);
+}
+
 TEST(Utf8Validation, UnicodeAndPlainTextHaveDistinctControlPolicies) {
     using sx::text::valid_utf8;
     using sx::text::utf8_policy;

@@ -90,6 +90,12 @@ bool ArchiveSchema::is_resource_path(std::string_view path) const {
     return !control && allows(path);
 }
 
+bool ArchiveSchema::is_managed_path(std::string_view path) const {
+    const bool protected_control = path == CfgManifest::path || path == main_config ||
+        path == startup_config;
+    return !protected_control && allows(path);
+}
+
 ArchiveSchema smithproxy_schema() {
     ArchiveSchema schema;
     schema.format = "smithproxy-cftar";
@@ -103,6 +109,9 @@ ArchiveSchema smithproxy_schema() {
             const bool root_config = path.find('/') == std::string::npos &&
                 path.size() >= 4 && path.substr(path.size() - 4) == ".cfg";
             if (!root_config) continue;
+            if (entry.executable) {
+                throw CfgTarError("CfgTar configuration cannot be executable: " + path);
+            }
             if (entry.data.size() > CfgManifest::max_config_size) {
                 throw CfgTarError("CfgTar configuration exceeds its size limit: " + path);
             }

@@ -63,6 +63,17 @@ TEST(ArchiveSchema, RequiredOptionalAndRecursiveDirectories) {
     EXPECT_THROW(CfgManifest::validate(schema, archive), CfgTarError);
 }
 
+TEST(ArchiveSchema, ManagedPathsProtectOnlyArchiveControlFiles) {
+    auto schema = app_schema();
+    schema.allowed_root_extensions = {".service"};
+    EXPECT_TRUE(schema.is_managed_path("logging.cfg"));
+    EXPECT_TRUE(schema.is_managed_path("worker.service"));
+    EXPECT_TRUE(schema.is_managed_path("certs/key.bin"));
+    EXPECT_FALSE(schema.is_managed_path("manifest.json"));
+    EXPECT_FALSE(schema.is_managed_path("app.cfg"));
+    EXPECT_FALSE(schema.is_managed_path("outside/file"));
+}
+
 TEST(ArchiveSchema, RejectsWrongIdentityAndOversizedIntegerVersion) {
     auto archive = app_archive();
     EXPECT_THROW(CfgManifest::validate(smithproxy_schema(), archive), CfgTarError);

@@ -188,7 +188,7 @@ void CfgArchiveSession::put(
 }
 
 void CfgArchiveSession::remove(std::string_view path) {
-    if(!CfgManifest::is_resource_path(schema_, path)) {
+    if(!CfgManifest::is_managed_path(schema_, path)) {
         throw CfgTarError("control file cannot be removed: " + std::string(path));
     }
     // Resource removal follows the same copy-validate-adopt rule as put().

@@ -32,6 +32,7 @@ struct ArchiveSchema {
     void validate() const;
     bool allows(std::string_view path) const;
     bool is_resource_path(std::string_view path) const;
+    bool is_managed_path(std::string_view path) const;
 };
 
 // Explicit compatibility profile; never selected implicitly.

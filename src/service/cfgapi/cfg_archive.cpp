@@ -88,6 +88,11 @@ bool CfgManifest::is_resource_path(const ArchiveSchema& schema, std::string_view
     return schema.is_resource_path(path);
 }
 
+bool CfgManifest::is_managed_path(const ArchiveSchema& schema, std::string_view path) {
+    schema.validate();
+    return schema.is_managed_path(path);
+}
+
 CfgResource::CfgResource(Kind kind, std::string logical_path, std::string value)
     : kind_(kind), logical_path_(std::move(logical_path)), value_(std::move(value)) {}
 
@@ -311,8 +316,8 @@ CfgSaveData CfgArchive::prepare_resource(
     std::optional<std::string> content,
     bool executable) const {
     if(!is_cftar()) fail("native resources require a CfgTar source");
-    if(!CfgManifest::is_resource_path(schema_, path)) {
-        fail("invalid CfgTar resource path: " + path);
+    if(!CfgManifest::is_managed_path(schema_, path)) {
+        fail("invalid managed CfgTar path: " + path);
     }
 
     // Work on a copy. The selected source must continue to describe durable
